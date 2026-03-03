@@ -24,6 +24,11 @@ const allowedOrigins = (frontendOrigin || "")
   .map((origin) => origin.trim())
   .filter(Boolean);
 
+const defaultProdOrigins = [
+  "https://bbs-bakery.com",
+  "https://www.bbs-bakery.com",
+];
+
 const defaultDevOrigins = [
   "http://localhost:5173",
   "http://127.0.0.1:5173",
@@ -31,12 +36,32 @@ const defaultDevOrigins = [
   "http://127.0.0.1:4173",
 ];
 
-const originAllowList = new Set([...allowedOrigins, ...defaultDevOrigins]);
+const normalizeOrigin = (origin) => {
+  if (!origin) {
+    return "";
+  }
+
+  try {
+    const parsed = new URL(origin);
+    return `${parsed.protocol}//${parsed.host}`;
+  } catch {
+    return String(origin).trim().replace(/\/$/, "");
+  }
+};
+
+const originAllowList = new Set(
+  [...allowedOrigins, ...defaultProdOrigins, ...defaultDevOrigins].map(normalizeOrigin),
+);
 
 app.use(
   cors({
     origin(origin, callback) {
-      if (!origin || originAllowList.size === 0 || originAllowList.has(origin)) {
+      const normalizedRequestOrigin = normalizeOrigin(origin);
+      if (
+        !origin ||
+        originAllowList.size === 0 ||
+        originAllowList.has(normalizedRequestOrigin)
+      ) {
         return callback(null, true);
       }
       return callback(new Error("Not allowed by CORS"));

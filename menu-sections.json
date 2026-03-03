@@ -1,0 +1,18 @@
+{
+  "byId": {
+    "ITD67G4DADGUSMKIC5TXG2DC": {
+      "section": "Baked Goods",
+      "visible": false
+    },
+    "YMMKVM7S2UCBTSZID36J7MR2": {
+      "section": "Baked Goods",
+      "visible": false
+    }
+  },
+  "byName": {
+    "dylan": {
+      "section": "Loaded Energy",
+      "visible": true
+    }
+  }
+}

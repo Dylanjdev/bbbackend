@@ -222,6 +222,8 @@ const updateTrackedOrder = async (orderId, transform) => {
     return null;
   }
 
+  
+
   const updatedOrder = {
     ...currentOrders[index],
     ...transform(currentOrders[index]),
@@ -963,7 +965,41 @@ app.post("/create-checkout", async (req, res) => {
 
     const url = response?.result?.paymentLink?.url || response?.paymentLink?.url;
     const paymentLinkId = response?.result?.paymentLink?.id || response?.paymentLink?.id || "unknown";
-    const orderId = response?.result?.paymentLink?.orderId || response?.paymentLink?.orderId || "unknown";
+    let orderId = response?.result?.paymentLink?.orderId || response?.paymentLink?.orderId;
+
+    // If orderId is not in the payment link response, we need to search for it
+    if (!orderId) {
+      try {
+        // The order was created with the idempotency key, search for it by customer name
+        const ordersResponse = await client.orders.searchOrders({
+          query: {
+            filter: {
+              locationId: { equalAny: [squareLocationId] },
+            },
+            sort: {
+              sortField: "CREATED_AT",
+              sortOrder: "DESC",
+            },
+          },
+          limit: 10,
+        });
+
+        // Find the most recent order that matches our customer name
+        const recentOrder = ordersResponse?.result?.orders?.find(
+          (o) =>
+            o.fulfillments?.[0]?.pickupDetails?.recipient?.displayName ===
+            (normalizedCustomerName || "Order for Pickup")
+        );
+
+        if (recentOrder?.id) {
+          orderId = recentOrder.id;
+        }
+      } catch (err) {
+        console.warn("[checkout] Failed to search for order ID:", err.message);
+      }
+    }
+
+    orderId = orderId || "unknown";
 
     console.log("[checkout] payment link created", {
       env: process.env.SQUARE_ENVIRONMENT || "sandbox",

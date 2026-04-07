@@ -90,6 +90,149 @@ const adminUsername = process.env.ADMIN_USERNAME || "";
 const adminPassword = process.env.ADMIN_PASSWORD || "";
 const adminJwtSecret = process.env.ADMIN_JWT_SECRET || "";
 
+const ordersStoreFilePath = path.join(__dirname, "orders.json");
+const MAX_ORDERS = 100;
+
+const normalizeCustomerName = (value) => String(value || "").trim();
+
+const readOrdersStore = async () => {
+  try {
+    const raw = await readFile(ordersStoreFilePath, "utf8");
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed?.orders) ? parsed.orders : [];
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      return [];
+    }
+    throw error;
+  }
+};
+
+const writeOrdersStore = async (orders) => {
+  const output = {
+    orders: Array.isArray(orders) ? orders.slice(0, MAX_ORDERS) : [],
+  };
+  await writeFile(ordersStoreFilePath, `${JSON.stringify(output, null, 2)}\n`, "utf8");
+};
+
+const createTrackedOrder = async (orderData) => {
+  const currentOrders = await readOrdersStore();
+  const now = new Date().toISOString();
+  const order = {
+    id: crypto.randomUUID(),
+    status: "pending",
+    timestamp: now,
+    createdAt: now,
+    updatedAt: now,
+    customerName: normalizeCustomerName(orderData.customerName) || "Guest",
+    items: Array.isArray(orderData.items) ? orderData.items : [],
+    total: typeof orderData.total === "number" ? orderData.total : null,
+    orderId: orderData.orderId || "",
+    paymentLinkId: orderData.paymentLinkId || "",
+    squareOrderVersion: null,
+    fulfillmentUid: null,
+    paidAt: null,
+    completedAt: null,
+    dismissedAt: null,
+  };
+
+  const nextOrders = [order, ...currentOrders.filter((entry) => entry.orderId !== order.orderId)];
+  await writeOrdersStore(nextOrders);
+  return order;
+};
+
+const getPrimaryFulfillment = (squareOrder) => {
+  const fulfillments = Array.isArray(squareOrder?.fulfillments) ? squareOrder.fulfillments : [];
+  return fulfillments[0] || null;
+};
+
+const isSquareOrderPaid = (squareOrder) => {
+  if (!squareOrder || squareOrder.state === "CANCELED") {
+    return false;
+  }
+
+  const tenders = Array.isArray(squareOrder.tenders) ? squareOrder.tenders : [];
+  if (tenders.length > 0) {
+    return true;
+  }
+
+  const netAmountDue = squareOrder?.net_amount_due_money?.amount;
+  return typeof netAmountDue === "number" && netAmountDue === 0;
+};
+
+const reconcileTrackedOrders = async () => {
+  const currentOrders = await readOrdersStore();
+
+  const reconciledOrders = await Promise.all(
+    currentOrders.map(async (trackedOrder) => {
+      if (!trackedOrder?.orderId || trackedOrder.status === "completed" || trackedOrder.status === "dismissed") {
+        return trackedOrder;
+      }
+
+      try {
+        const response = await squareRequest(`/v2/orders/${trackedOrder.orderId}`);
+        const squareOrder = response?.order;
+
+        if (!squareOrder) {
+          return trackedOrder;
+        }
+
+        const primaryFulfillment = getPrimaryFulfillment(squareOrder);
+        const paid = isSquareOrderPaid(squareOrder);
+        const nextStatus = primaryFulfillment?.state === "COMPLETED"
+          ? "completed"
+          : paid
+            ? "paid"
+            : "pending";
+
+        return {
+          ...trackedOrder,
+          total:
+            typeof squareOrder?.total_money?.amount === "number"
+              ? squareOrder.total_money.amount
+              : trackedOrder.total,
+          squareOrderVersion:
+            typeof squareOrder?.version === "number"
+              ? squareOrder.version
+              : trackedOrder.squareOrderVersion,
+          fulfillmentUid: primaryFulfillment?.uid || trackedOrder.fulfillmentUid,
+          status: nextStatus,
+          paidAt: paid ? trackedOrder.paidAt || new Date().toISOString() : trackedOrder.paidAt,
+          completedAt:
+            nextStatus === "completed"
+              ? trackedOrder.completedAt || new Date().toISOString()
+              : trackedOrder.completedAt,
+          updatedAt: new Date().toISOString(),
+        };
+      } catch {
+        return trackedOrder;
+      }
+    }),
+  );
+
+  await writeOrdersStore(reconciledOrders);
+  return reconciledOrders;
+};
+
+const updateTrackedOrder = async (orderId, transform) => {
+  const currentOrders = await readOrdersStore();
+  const index = currentOrders.findIndex((order) => order.orderId === orderId);
+
+  if (index === -1) {
+    return null;
+  }
+
+  const updatedOrder = {
+    ...currentOrders[index],
+    ...transform(currentOrders[index]),
+    updatedAt: new Date().toISOString(),
+  };
+
+  currentOrders[index] = updatedOrder;
+  await writeOrdersStore(currentOrders);
+  return updatedOrder;
+};
+
 const squareApiBaseUrl =
   process.env.SQUARE_ENVIRONMENT === "production"
     ? "https://connect.squareup.com"
@@ -98,6 +241,7 @@ const squareApiBaseUrl =
 const sectionOptions = [
   "Baked Goods",
   "Breakfast",
+  "Lunch",
   "Loaded Energy",
   "Specialty Coffee",
   "Classic Espresso",
@@ -116,9 +260,16 @@ const curatedDefaultItems = [
   { name: "Coffee Cake", section: "Baked Goods" },
   { name: "Cream Horns", section: "Baked Goods" },
   { name: "Savory Biscuit", section: "Breakfast" },
+  { name: "Breakfast Biscuit", section: "Breakfast" },
   { name: "Breakfast Sandwich", section: "Breakfast" },
   { name: "Breakfast Wrap", section: "Breakfast" },
   { name: "Omelette", section: "Breakfast" },
+  { name: "BB's Signature Grilled Cheese", section: "Lunch" },
+  { name: "BB's Buttery BLT", section: "Lunch" },
+  { name: "Chicken Salad Croissant", section: "Lunch" },
+  { name: "BB's Croissant Club", section: "Lunch" },
+  { name: "Italian Wrap", section: "Lunch" },
+  { name: "Buffalo Chicken Wrap", section: "Lunch" },
   { name: "Tater Colada", section: "Loaded Energy" },
   { name: "Blushing Belle", section: "Loaded Energy" },
   { name: "Rip-Tide", section: "Loaded Energy" },
@@ -310,8 +461,17 @@ const normalizeCatalogItems = (objects = [], menuMetadata = { byId: {}, byName: 
       const normalizedName = normalizeKey(itemData.name || "");
       const curatedDefaultSection = curatedDefaultsByName.get(normalizedName) || "Baked Goods";
       const curatedDefaultVisible = curatedDefaultsByName.has(normalizedName);
+      const byIdEntry = menuMetadata?.byId?.[item.id];
+      const byNameEntry = menuMetadata?.byName?.[normalizedName];
+
+      const isLegacyHiddenDefault =
+        byIdEntry?.section === "Baked Goods" && byIdEntry?.visible === false;
+
+      const shouldPreferCuratedDefault =
+        curatedDefaultsByName.has(normalizedName) && !byNameEntry && isLegacyHiddenDefault;
+
       const metadata = toMetadataEntry(
-        menuMetadata?.byId?.[item.id] || menuMetadata?.byName?.[normalizedName],
+        shouldPreferCuratedDefault ? undefined : (byIdEntry || byNameEntry),
         { section: curatedDefaultSection, visible: curatedDefaultVisible },
       );
       const variations = (itemData.variations || [])
@@ -367,6 +527,27 @@ const fetchAllCatalogItems = async () => {
   return normalizeCatalogItems(objects, menuMetadata);
 };
 
+const ORDERABLE_SECTIONS = new Set(["Breakfast", "Lunch"]);
+
+const getOrderableVariationIds = async () => {
+  const items = await fetchAllCatalogItems();
+  const ids = new Set();
+
+  items.forEach((item) => {
+    if (!ORDERABLE_SECTIONS.has(item?.section) || item?.visible === false) {
+      return;
+    }
+
+    (item.variations || []).forEach((variation) => {
+      if (variation?.id) {
+        ids.add(variation.id);
+      }
+    });
+  });
+
+  return ids;
+};
+
 app.post("/admin/login", (req, res) => {
   const { username, password } = req.body || {};
 
@@ -379,6 +560,96 @@ app.post("/admin/login", (req, res) => {
   }
 
   return res.json({ token: createAdminToken() });
+});
+
+app.get("/admin/orders", requireAdmin, async (_req, res) => {
+  try {
+    const trackedOrders = await reconcileTrackedOrders();
+    const orders = trackedOrders
+      .filter((order) => order.status === "paid")
+      .slice(0, 50);
+
+    return res.json({ orders });
+  } catch (error) {
+    return res.status(500).json({ error: error.message || "Failed to load orders" });
+  }
+});
+
+app.patch("/admin/orders/:orderId/complete", requireAdmin, async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    
+    if (!orderId) {
+      return res.status(400).json({ error: "Order ID is required" });
+    }
+
+    const currentOrderResponse = await squareRequest(`/v2/orders/${orderId}`);
+    const currentOrder = currentOrderResponse?.order;
+
+    if (!currentOrder) {
+      return res.status(404).json({ error: "Order not found in Square" });
+    }
+
+    const primaryFulfillment = getPrimaryFulfillment(currentOrder);
+    if (!primaryFulfillment?.uid) {
+      return res.status(400).json({ error: "Order does not have a pickup fulfillment to complete" });
+    }
+
+    await squareRequest(`/v2/orders/${orderId}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        idempotency_key: crypto.randomUUID(),
+        order: {
+          location_id: currentOrder.location_id || squareLocationId,
+          version: currentOrder.version,
+          fulfillments: (currentOrder.fulfillments || []).map((fulfillment) => ({
+            uid: fulfillment.uid,
+            type: fulfillment.type,
+            state: fulfillment.uid === primaryFulfillment.uid ? "COMPLETED" : fulfillment.state,
+          })),
+        },
+      }),
+    });
+
+    await updateTrackedOrder(orderId, () => ({
+      status: "completed",
+      completedAt: new Date().toISOString(),
+    }));
+
+    console.log("[admin] Order marked complete:", orderId);
+    return res.json({ success: true });
+  } catch (error) {
+    console.error("[admin] Failed to complete order:", error);
+    const squareDetail =
+      error?.body?.errors?.[0]?.detail ||
+      error?.result?.errors?.[0]?.detail ||
+      error?.message ||
+      "Failed to update order";
+    return res.status(500).json({ error: squareDetail });
+  }
+});
+
+app.delete("/admin/orders/:orderId", requireAdmin, async (req, res) => {
+  try {
+    const { orderId } = req.params;
+
+    if (!orderId) {
+      return res.status(400).json({ error: "Order ID is required" });
+    }
+
+    const updatedOrder = await updateTrackedOrder(orderId, () => ({
+      status: "dismissed",
+      dismissedAt: new Date().toISOString(),
+    }));
+
+    if (!updatedOrder) {
+      return res.status(404).json({ error: "Order not found" });
+    }
+
+    return res.status(204).send();
+  } catch (error) {
+    return res.status(500).json({ error: error.message || "Failed to remove order" });
+  }
 });
 
 app.get("/menu", async (req, res) => {
@@ -599,10 +870,13 @@ app.post("/create-checkout", async (req, res) => {
       return res.status(500).json({ error: "Missing Square backend configuration" });
     }
 
-    const { items } = req.body;
+    const { items, customerName } = req.body;
+    const normalizedCustomerName = normalizeCustomerName(customerName);
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: "Cart is empty" });
     }
+
+    const orderableVariationIds = await getOrderableVariationIds();
 
     const hasInvalidItems = items.some((item) => {
       const variationId =
@@ -613,42 +887,24 @@ app.post("/create-checkout", async (req, res) => {
         return true;
       }
 
-      if (variationId) {
-        return false;
+      if (!variationId) {
+        return true;
       }
 
-      const amount = item?.basePriceMoney?.amount;
-      return (
-        !item?.name ||
-        !Number.isInteger(amount) ||
-        amount <= 0
-      );
+      return !orderableVariationIds.has(variationId);
     });
 
     if (hasInvalidItems) {
       return res.status(400).json({ error: "Invalid cart items" });
     }
 
-    const normalizedLineItems = items.map((item) => {
-      const variationId =
-        typeof item?.variationId === "string" ? item.variationId.trim() : "";
-
-      if (variationId) {
-        return {
-          catalogObjectId: variationId,
-          quantity: String(Number(item.quantity)),
-        };
-      }
-
-      return {
-        name: item.name,
-        quantity: String(Number(item.quantity)),
-        basePriceMoney: {
-          amount: BigInt(item.basePriceMoney.amount),
-          currency: item?.basePriceMoney?.currency || "USD",
-        },
-      };
-    });
+    const normalizedLineItems = items.map((item) => ({
+      catalogObjectId: String(item.variationId).trim(),
+      quantity: String(Number(item.quantity)),
+      ...(typeof item?.note === "string" && item.note.trim()
+        ? { note: item.note.trim() }
+        : {}),
+    }));
 
     const orderPayload = {
       locationId: squareLocationId,
@@ -659,7 +915,7 @@ app.post("/create-checkout", async (req, res) => {
           state: "PROPOSED",
           pickupDetails: {
             recipient: {
-              displayName: "Order for Pickup",
+              displayName: normalizedCustomerName || "Order for Pickup",
             },
             scheduleType: "ASAP",
           },
@@ -719,6 +975,25 @@ app.post("/create-checkout", async (req, res) => {
     if (!url) {
       return res.status(502).json({ error: "Checkout URL not returned" });
     }
+
+    const estimatedTotal = items.reduce(
+      (sum, item) => sum + (Number(item?.basePriceMoney?.amount) || 0) * (Number(item?.quantity) || 0),
+      0,
+    );
+
+    await createTrackedOrder({
+      orderId,
+      paymentLinkId,
+      customerName: normalizedCustomerName || "Guest",
+      items: items.map((item) => ({
+        name: item.name || "Unknown Item",
+        quantity: Number(item.quantity),
+        price: item.basePriceMoney?.amount || 0,
+        note: typeof item?.note === "string" ? item.note : "",
+      })),
+      total: estimatedTotal,
+    });
+
     res.json({ url });
   } catch (err) {
     console.error(err);

@@ -267,11 +267,15 @@ const curatedDefaultItems = [
   { name: "Breakfast Wrap", section: "Breakfast" },
   { name: "Omelette", section: "Breakfast" },
   { name: "BB's Signature Grilled Cheese", section: "Lunch" },
+  { name: "Grilled Cheese", section: "Lunch" },
   { name: "BB's Buttery BLT", section: "Lunch" },
+  { name: "BLT", section: "Lunch" },
   { name: "Chicken Salad Croissant", section: "Lunch" },
   { name: "BB's Croissant Club", section: "Lunch" },
+  { name: "Croissant Club", section: "Lunch" },
   { name: "Italian Wrap", section: "Lunch" },
   { name: "Buffalo Chicken Wrap", section: "Lunch" },
+  { name: "Buffalo Chicken wrap", section: "Lunch" },
   { name: "Tater Colada", section: "Loaded Energy" },
   { name: "Blushing Belle", section: "Loaded Energy" },
   { name: "Rip-Tide", section: "Loaded Energy" },
@@ -880,24 +884,34 @@ app.post("/create-checkout", async (req, res) => {
 
     const orderableVariationIds = await getOrderableVariationIds();
 
-    const hasInvalidItems = items.some((item) => {
+    const invalidItemNames = [];
+
+    items.forEach((item) => {
       const variationId =
         typeof item?.variationId === "string" ? item.variationId.trim() : "";
       const quantity = Number(item?.quantity);
+      const itemName = typeof item?.name === "string" && item.name.trim() ? item.name.trim() : "Unknown item";
 
       if (!Number.isFinite(quantity) || quantity <= 0) {
-        return true;
+        invalidItemNames.push(itemName);
+        return;
       }
 
       if (!variationId) {
-        return true;
+        invalidItemNames.push(itemName);
+        return;
       }
 
-      return !orderableVariationIds.has(variationId);
+      if (!orderableVariationIds.has(variationId)) {
+        invalidItemNames.push(itemName);
+      }
     });
 
-    if (hasInvalidItems) {
-      return res.status(400).json({ error: "Invalid cart items" });
+    if (invalidItemNames.length > 0) {
+      return res.status(400).json({
+        error: "Invalid cart items",
+        details: `These items are not currently available for online checkout: ${invalidItemNames.join(", ")}`,
+      });
     }
 
     const normalizedLineItems = items.map((item) => ({

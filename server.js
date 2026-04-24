@@ -534,13 +534,22 @@ const fetchAllCatalogItems = async () => {
 };
 
 const ORDERABLE_SECTIONS = new Set(["Breakfast", "Lunch"]);
+const PREORDER_ORDERABLE_NAMES = new Set([
+  "white bread",
+  "cinnamon raisin bread",
+  "cheddar jalopeno bread",
+]);
 
 const getOrderableVariationIds = async () => {
   const items = await fetchAllCatalogItems();
   const ids = new Set();
 
   items.forEach((item) => {
-    if (!ORDERABLE_SECTIONS.has(item?.section) || item?.visible === false) {
+    const normalizedName = normalizeKey(item?.name || "");
+    const isStandardOnlineOrderable = ORDERABLE_SECTIONS.has(item?.section) && item?.visible !== false;
+    const isPreOrderBread = PREORDER_ORDERABLE_NAMES.has(normalizedName);
+
+    if (!isStandardOnlineOrderable && !isPreOrderBread) {
       return;
     }
 

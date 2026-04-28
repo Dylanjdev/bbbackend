@@ -156,8 +156,37 @@ const isSquareOrderPaid = (squareOrder) => {
     return true;
   }
 
+  const tenderIds = Array.isArray(squareOrder.tender_ids) ? squareOrder.tender_ids : [];
+  if (tenderIds.length > 0) {
+    return true;
+  }
+
   const netAmountDue = squareOrder?.net_amount_due_money?.amount;
   return typeof netAmountDue === "number" && netAmountDue === 0;
+};
+
+const hasCompletedPaymentForOrder = async (orderId) => {
+  if (!orderId || orderId === "unknown") {
+    return false;
+  }
+
+  try {
+    const query = new URLSearchParams({
+      order_id: orderId,
+      limit: "5",
+      sort_order: "DESC",
+    });
+
+    const response = await squareRequest(`/v2/payments?${query.toString()}`);
+    const payments = Array.isArray(response?.payments) ? response.payments : [];
+
+    return payments.some((payment) => {
+      const status = String(payment?.status || "").toUpperCase();
+      return status === "COMPLETED" || status === "APPROVED";
+    });
+  } catch {
+    return false;
+  }
 };
 
 const reconcileTrackedOrders = async () => {
@@ -165,7 +194,12 @@ const reconcileTrackedOrders = async () => {
 
   const reconciledOrders = await Promise.all(
     currentOrders.map(async (trackedOrder) => {
-      if (!trackedOrder?.orderId || trackedOrder.status === "completed" || trackedOrder.status === "dismissed") {
+      if (
+        !trackedOrder?.orderId ||
+        trackedOrder.orderId === "unknown" ||
+        trackedOrder.status === "completed" ||
+        trackedOrder.status === "dismissed"
+      ) {
         return trackedOrder;
       }
 
@@ -178,7 +212,9 @@ const reconcileTrackedOrders = async () => {
         }
 
         const primaryFulfillment = getPrimaryFulfillment(squareOrder);
-        const paid = isSquareOrderPaid(squareOrder);
+        const paid =
+          isSquareOrderPaid(squareOrder) ||
+          (trackedOrder.status !== "paid" && (await hasCompletedPaymentForOrder(trackedOrder.orderId)));
         const nextStatus = primaryFulfillment?.state === "COMPLETED"
           ? "completed"
           : paid
@@ -989,6 +1025,20 @@ app.post("/create-checkout", async (req, res) => {
     const url = response?.result?.paymentLink?.url || response?.paymentLink?.url;
     const paymentLinkId = response?.result?.paymentLink?.id || response?.paymentLink?.id || "unknown";
     let orderId = response?.result?.paymentLink?.orderId || response?.paymentLink?.orderId;
+
+    if (!orderId && paymentLinkId && paymentLinkId !== "unknown") {
+      try {
+        const paymentLinkResponse = await squareRequest(
+          `/v2/online-checkout/payment-links/${paymentLinkId}`,
+        );
+        orderId =
+          paymentLinkResponse?.payment_link?.order_id ||
+          paymentLinkResponse?.paymentLink?.orderId ||
+          orderId;
+      } catch (err) {
+        console.warn("[checkout] Failed to retrieve payment link order ID:", err.message);
+      }
+    }
 
     // If orderId is not in the payment link response, we need to search for it
     if (!orderId) {

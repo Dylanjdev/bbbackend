@@ -91,9 +91,39 @@ const adminPassword = process.env.ADMIN_PASSWORD || "";
 const adminJwtSecret = process.env.ADMIN_JWT_SECRET || "";
 
 const ordersStoreFilePath = path.join(__dirname, "orders.json");
+const orderingSettingsFilePath = path.join(__dirname, "ordering-settings.json");
 const MAX_ORDERS = 100;
+const DEFAULT_ORDERING_SETTINGS = {
+  enabled: false,
+  updatedAt: null,
+};
 
 const normalizeCustomerName = (value) => String(value || "").trim();
+
+const readOrderingSettings = async () => {
+  try {
+    const raw = await readFile(orderingSettingsFilePath, "utf8");
+    const parsed = JSON.parse(raw);
+    return {
+      enabled: parsed?.enabled === true,
+      updatedAt: typeof parsed?.updatedAt === "string" ? parsed.updatedAt : null,
+    };
+  } catch (error) {
+    if (error?.code === "ENOENT" || error instanceof SyntaxError) {
+      return { ...DEFAULT_ORDERING_SETTINGS };
+    }
+    throw error;
+  }
+};
+
+const writeOrderingSettings = async (enabled) => {
+  const settings = {
+    enabled: enabled === true,
+    updatedAt: new Date().toISOString(),
+  };
+  await writeFile(orderingSettingsFilePath, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
+  return settings;
+};
 
 const readOrdersStore = async () => {
   try {
@@ -613,6 +643,30 @@ app.post("/admin/login", (req, res) => {
   return res.json({ token: createAdminToken() });
 });
 
+app.get("/ordering-status", async (_req, res) => {
+  try {
+    const settings = await readOrderingSettings();
+    res.set("Cache-Control", "no-store");
+    return res.json(settings);
+  } catch (error) {
+    return res.status(500).json({ error: error.message || "Failed to load ordering status" });
+  }
+});
+
+app.patch("/admin/ordering-status", requireAdmin, async (req, res) => {
+  try {
+    const { enabled } = req.body || {};
+    if (typeof enabled !== "boolean") {
+      return res.status(400).json({ error: "enabled must be a boolean" });
+    }
+
+    const settings = await writeOrderingSettings(enabled);
+    return res.json(settings);
+  } catch (error) {
+    return res.status(500).json({ error: error.message || "Failed to update ordering status" });
+  }
+});
+
 app.get("/admin/orders", requireAdmin, async (_req, res) => {
   try {
     const trackedOrders = await reconcileTrackedOrders();
@@ -919,6 +973,14 @@ app.post("/create-checkout", async (req, res) => {
   try {
     if (!process.env.SQUARE_ACCESS_TOKEN || !squareLocationId) {
       return res.status(500).json({ error: "Missing Square backend configuration" });
+    }
+
+    const orderingSettings = await readOrderingSettings();
+    if (!orderingSettings.enabled) {
+      return res.status(503).json({
+        error: "Online ordering is currently turned off",
+        details: "Please call the cafe to place an order.",
+      });
     }
 
     const { items, customerName } = req.body;

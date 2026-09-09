@@ -46,12 +46,18 @@ Server default: `http://localhost:3001`
 
 - `POST /create-checkout`
 - `GET /menu`
+- `GET /ordering-status`
 
 ### Admin auth
 
 - `POST /admin/login`
 	- body: `{ "username": "...", "password": "..." }`
 	- returns: `{ "token": "..." }`
+
+### Admin ordering control (Bearer token required)
+
+- `PATCH /admin/ordering-status`
+	- body: `{ "enabled": true }`
 
 ### Admin menu (Bearer token required)
 

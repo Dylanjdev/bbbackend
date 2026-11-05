@@ -6,6 +6,7 @@ import crypto from "crypto";
 import path from "path";
 import { fileURLToPath } from "url";
 import { readFile, writeFile } from "node:fs/promises";
+import { getOrderingScheduleStatus } from "./orderingSchedule.js";
 
 const { SquareClient, SquareEnvironment } = square;
 
@@ -89,14 +90,25 @@ const salesTaxPercent = Number(process.env.SALES_TAX_PERCENT || 0);
 const adminUsername = process.env.ADMIN_USERNAME || "";
 const adminPassword = process.env.ADMIN_PASSWORD || "";
 const adminJwtSecret = process.env.ADMIN_JWT_SECRET || "";
+const bakeryTimeZone = process.env.BAKERY_TIME_ZONE || "America/New_York";
 
 const ordersStoreFilePath = path.join(__dirname, "orders.json");
 const orderingSettingsFilePath = path.join(__dirname, "ordering-settings.json");
-const MAX_ORDERS = 100;
+const MAX_ORDERS = 1000;
 const DEFAULT_ORDERING_SETTINGS = {
-  enabled: false,
+  enabled: true,
   updatedAt: null,
 };
+const THANKSGIVING_PREORDER_VARIATION_IDS = new Set([
+  "25V2R7LMAAQTN5SFQU7TJPAN", // Pumpkin Pie
+  "UAXGS4GAP54A4KQQQ3YVN5G3", // Carrot Cake
+  "7SUP6N44FVRWKHUDHCM74RTJ", // Brown Butter Pecan Cake
+  "XCTRTZVC2WW456E24PT57DRY", // Pumpkin Pie Cheesecake
+  "4MJVXWDXBL3FIS7A6XLA7QNJ", // Mini Croissants, half dozen
+  "JIRL32DOYUYM42M3BZVH4XPC", // Mini Croissants, dozen
+  "BOTR62XDUWWRXESSFAXNLYDW", // Cookies, half dozen
+  "U4JY6NDESFWAFR77SM3RIFWN", // Cookies, dozen
+]);
 
 const normalizeCustomerName = (value) => String(value || "").trim();
 
@@ -166,7 +178,11 @@ const createTrackedOrder = async (orderData) => {
     dismissedAt: null,
   };
 
-  const nextOrders = [order, ...currentOrders.filter((entry) => entry.orderId !== order.orderId)];
+  const hasSquareOrderId = order.orderId && order.orderId !== "unknown";
+  const nextOrders = [
+    order,
+    ...currentOrders.filter((entry) => !hasSquareOrderId || entry.orderId !== order.orderId),
+  ];
   await writeOrdersStore(nextOrders);
   return order;
 };
@@ -307,26 +323,38 @@ const squareApiBaseUrl =
     : "https://connect.squareupsandbox.com";
 
 const sectionOptions = [
-  "Baked Goods",
+  "Daily Bakes",
+  "Tuesday Spotlight Bake",
+  "Wednesday Spotlight Bake",
+  "Thursday Spotlight Bake",
+  "Friday Spotlight Bake",
+  "Saturday Spotlight Bake",
   "Breakfast",
   "Lunch",
+  "Pre-Orders",
   "Loaded Energy",
   "Specialty Coffee",
   "Classic Espresso",
   "Iced Latte",
   "Hot Latte",
   "Frappes",
-  "💥 Dirty Sodas & Lemonades",
-  "🍓 Smoothies",
+  "Dirty Sodas",
+  "Smoothies",
 ];
 
 const curatedDefaultItems = [
-  { name: "Muffins", section: "Baked Goods" },
-  { name: "Brownies", section: "Baked Goods" },
-  { name: "Scones", section: "Baked Goods" },
-  { name: "Cinnamon Rolls", section: "Baked Goods" },
-  { name: "Coffee Cake", section: "Baked Goods" },
-  { name: "Cream Horns", section: "Baked Goods" },
+  { name: "Brownie", section: "Daily Bakes" },
+  { name: "Cookie", section: "Daily Bakes" },
+  { name: "Muffin", section: "Daily Bakes" },
+  { name: "Scone", section: "Daily Bakes" },
+  { name: "Slice Of Cake", section: "Daily Bakes" },
+  { name: "Cupcake", section: "Tuesday Spotlight Bake" },
+  { name: "Danish", section: "Wednesday Spotlight Bake" },
+  { name: "Cinnamon Roll", section: "Thursday Spotlight Bake" },
+  { name: "Mini Quiche", section: "Friday Spotlight Bake" },
+  { name: "Quiche Slice", section: "Friday Spotlight Bake" },
+  { name: "Mini Cheesecake", section: "Friday Spotlight Bake" },
+  { name: "Croissant", section: "Saturday Spotlight Bake" },
   { name: "Savory Biscuit", section: "Breakfast" },
   { name: "Breakfast Biscuit", section: "Breakfast" },
   { name: "Breakfast Sandwich", section: "Breakfast" },
@@ -342,6 +370,10 @@ const curatedDefaultItems = [
   { name: "Italian Wrap", section: "Lunch" },
   { name: "Buffalo Chicken Wrap", section: "Lunch" },
   { name: "Buffalo Chicken wrap", section: "Lunch" },
+  { name: "White Bread", section: "Pre-Orders" },
+  { name: "Cinnamon Raisin Bread", section: "Pre-Orders" },
+  { name: "Cheddar Jalopeno bread", section: "Pre-Orders" },
+  { name: "Loaded Energy", section: "Loaded Energy" },
   { name: "Tater Colada", section: "Loaded Energy" },
   { name: "Blushing Belle", section: "Loaded Energy" },
   { name: "Rip-Tide", section: "Loaded Energy" },
@@ -355,7 +387,6 @@ const curatedDefaultItems = [
   { name: "Smore's", section: "Specialty Coffee" },
   { name: "White Chocolate Raspberry", section: "Specialty Coffee" },
   { name: "Caramel Kolb", section: "Specialty Coffee" },
-  { name: "Cinnamon Roll", section: "Specialty Coffee" },
   { name: "Conor McGregor", section: "Specialty Coffee" },
   { name: "Blackstone", section: "Specialty Coffee" },
   { name: "Peppermint Mocha", section: "Specialty Coffee" },
@@ -368,8 +399,10 @@ const curatedDefaultItems = [
   { name: "Iced Latte", section: "Iced Latte" },
   { name: "Hot Latte", section: "Hot Latte" },
   { name: "Frappe", section: "Frappes" },
-  { name: "Dirty Soda & Lemonade", section: "💥 Dirty Sodas & Lemonades" },
-  { name: "Smoothie", section: "🍓 Smoothies" },
+  { name: "Dirty Soda", section: "Dirty Sodas" },
+  { name: "Dirty Soda & Lemonade", section: "Dirty Sodas" },
+  { name: "Lemonade", section: "Dirty Sodas" },
+  { name: "Smoothie", section: "Smoothies" },
 ];
 
 const menuMetadataFilePath = path.join(__dirname, "menu-sections.json");
@@ -384,16 +417,75 @@ const curatedDefaultsByName = new Map(
   curatedDefaultItems.map((entry) => [normalizeKey(entry.name), entry.section]),
 );
 
-const getSafeSection = (section) =>
-  sectionOptions.includes(section) ? section : "Baked Goods";
+const defaultMenuNamesByVariation = new Map([
+  ["BCSSMOTHSCZF5RILWMPKGVBI", "Double Chocolate Brownies"],
+  ["7WCHB3ZABC72COZYGSSTF2SS", "Double Chocolate Cookies"],
+  ["B26BFSNNVQMR2LTHWV75JJBH", "Cran-Orange Scones"],
+  ["DHU62MYYBTNIHLQFV5NG4Q4L", "Apple Crumb Cake"],
+  ["K6NFLCWFO7T53G2V6Z72E5TK", "Carrot Cupcakes with Cream Cheese Buttercream"],
+  ["NANPTO7A32H2D2STQDXD4CEI", "Maple Pecan Cream Cheese Danishes"],
+  ["4EVFHDZ3LHYZOXF4EOGMD3JZ", "Cinnamon Rolls"],
+  ["BJ6WQGCEQMZV2XAPYNUUH533", "Southwest Quiche"],
+  ["3LMSDYWNKQESPH3ESB6NHWVS", "Brown Butter Pecan Cheesecake"],
+  ["IU5OOQJJI5XQD3YQ2O7TFAEC", "Nutella Croissants"],
+]);
+
+const getSafeSection = (section) => {
+  if (section === "Baked Goods" || section === "Daily Menu") {
+    return "Daily Bakes";
+  }
+  if (section === "💥 Dirty Sodas & Lemonades") {
+    return "Dirty Sodas";
+  }
+  if (section === "🍓 Smoothies") {
+    return "Smoothies";
+  }
+
+  return sectionOptions.includes(section) ? section : "Daily Bakes";
+};
 
 const getSafeVisible = (visible) => visible !== false;
 
-const toMetadataEntry = (entry, fallback = { section: "Baked Goods", visible: false }) => {
+const normalizeStockLimit = (value) => {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
+};
+
+const normalizeStockByVariation = (value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .map(([variationId, limit]) => [variationId, normalizeStockLimit(limit)])
+      .filter(([variationId, limit]) => Boolean(variationId) && limit !== null),
+  );
+};
+
+const normalizeMenuNamesByVariation = (value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .map(([variationId, menuName]) => [variationId, String(menuName || "").trim()])
+      .filter(([variationId, menuName]) => Boolean(variationId) && Boolean(menuName)),
+  );
+};
+
+const toMetadataEntry = (entry, fallback = { section: "Daily Bakes", visible: false }) => {
   if (entry && typeof entry === "object") {
     return {
       section: getSafeSection(entry.section),
       visible: getSafeVisible(entry.visible),
+      stockByVariation: normalizeStockByVariation(entry.stockByVariation),
+      menuNamesByVariation: normalizeMenuNamesByVariation(entry.menuNamesByVariation),
     };
   }
 
@@ -401,12 +493,16 @@ const toMetadataEntry = (entry, fallback = { section: "Baked Goods", visible: fa
     return {
       section: getSafeSection(entry),
       visible: getSafeVisible(fallback.visible),
+      stockByVariation: {},
+      menuNamesByVariation: {},
     };
   }
 
   return {
     section: getSafeSection(fallback.section),
     visible: getSafeVisible(fallback.visible),
+    stockByVariation: normalizeStockByVariation(fallback.stockByVariation),
+    menuNamesByVariation: normalizeMenuNamesByVariation(fallback.menuNamesByVariation),
   };
 };
 
@@ -439,6 +535,68 @@ const writeMenuMetadata = async (metadata) => {
     byName: metadata?.byName || {},
   };
   await writeFile(menuMetadataFilePath, `${JSON.stringify(output, null, 2)}\n`, "utf8");
+};
+
+const validateRequestedVariations = (variations) => {
+  if (!Array.isArray(variations) || variations.length === 0) {
+    return "At least one variation is required";
+  }
+
+  for (const variation of variations) {
+    const priceAmount = Number(variation?.priceAmount);
+    const stockLimit = Number(variation?.stockLimit);
+    if (!Number.isInteger(priceAmount) || priceAmount <= 0) {
+      return "Every variation must have a price greater than zero";
+    }
+    if (!Number.isInteger(stockLimit) || stockLimit < 0) {
+      return "Every variation must have a whole-number daily stock limit of zero or more";
+    }
+    if (String(variation?.menuName || "").trim().length > 100) {
+      return "Daily menu names must be 100 characters or fewer";
+    }
+  }
+
+  return "";
+};
+
+const buildStockByVariation = (catalogItem, requestedVariations) => {
+  const savedVariations = catalogItem?.item_data?.variations || [];
+  const requestedById = new Map(
+    (requestedVariations || [])
+      .filter((variation) => variation?.id)
+      .map((variation) => [variation.id, variation]),
+  );
+
+  return Object.fromEntries(
+    savedVariations
+      .map((savedVariation, index) => [
+        savedVariation?.id,
+        normalizeStockLimit(
+          (requestedById.get(savedVariation?.id) || requestedVariations?.[index])?.stockLimit,
+        ),
+      ])
+      .filter(([variationId, stockLimit]) => Boolean(variationId) && stockLimit !== null),
+  );
+};
+
+const buildMenuNamesByVariation = (catalogItem, requestedVariations) => {
+  const savedVariations = catalogItem?.item_data?.variations || [];
+  const requestedById = new Map(
+    (requestedVariations || [])
+      .filter((variation) => variation?.id)
+      .map((variation) => [variation.id, variation]),
+  );
+
+  return Object.fromEntries(
+    savedVariations
+      .map((savedVariation, index) => [
+        savedVariation?.id,
+        String(
+          (requestedById.get(savedVariation?.id) || requestedVariations?.[index])?.menuName || "",
+        ).trim(),
+      ])
+      .filter(([variationId, menuName]) => Boolean(variationId) && Boolean(menuName)),
+  );
 };
 
 const squareHeaders = () => ({
@@ -525,19 +683,102 @@ const squareRequest = async (pathname, options = {}) => {
   return data;
 };
 
-const normalizeCatalogItems = (objects = [], menuMetadata = { byId: {}, byName: {} }) => {
+const getBakeryDateKey = (value = new Date()) => {
+  try {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: bakeryTimeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date(value));
+  } catch {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/New_York",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date(value));
+  }
+};
+
+const getBakeryDateParts = (value = new Date()) => {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: bakeryTimeZone,
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+    hour: "numeric",
+    minute: "numeric",
+    hourCycle: "h23",
+  }).formatToParts(new Date(value));
+
+  return Object.fromEntries(
+    parts
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, Number(part.value)]),
+  );
+};
+
+const isThanksgivingPreOrderWindowOpen = (value = new Date()) => {
+  const { month, day, hour, minute } = getBakeryDateParts(value);
+
+  if (month < 10 || month > 11) {
+    return false;
+  }
+
+  return month === 10
+    || day < 19
+    || (day === 19 && ((hour * 60) + minute < 17 * 60));
+};
+
+const getThanksgivingPickupAt = (value = new Date()) => {
+  const { year } = getBakeryDateParts(value);
+  return `${year}-11-25T07:00:00-05:00`;
+};
+
+const getDailyStockUsage = async () => {
+  const orders = await readOrdersStore();
+  const todayKey = getBakeryDateKey();
+  const usedByVariation = new Map();
+
+  orders.forEach((order) => {
+    const orderDate = new Date(order?.timestamp || order?.createdAt || "");
+    if (Number.isNaN(orderDate.getTime()) || getBakeryDateKey(orderDate) !== todayKey) {
+      return;
+    }
+
+    (Array.isArray(order?.items) ? order.items : []).forEach((item) => {
+      const variationId = typeof item?.variationId === "string" ? item.variationId.trim() : "";
+      const quantity = Number(item?.quantity);
+      if (!variationId || !Number.isInteger(quantity) || quantity <= 0) {
+        return;
+      }
+
+      usedByVariation.set(variationId, (usedByVariation.get(variationId) || 0) + quantity);
+    });
+  });
+
+  return usedByVariation;
+};
+
+const normalizeCatalogItems = (
+  objects = [],
+  menuMetadata = { byId: {}, byName: {} },
+  usedByVariation = new Map(),
+) => {
   return objects
     .filter((object) => object.type === "ITEM" && !object.is_deleted)
     .map((item) => {
       const itemData = item.item_data || {};
       const normalizedName = normalizeKey(itemData.name || "");
-      const curatedDefaultSection = curatedDefaultsByName.get(normalizedName) || "Baked Goods";
+      const curatedDefaultSection = curatedDefaultsByName.get(normalizedName) || "Daily Bakes";
       const curatedDefaultVisible = curatedDefaultsByName.has(normalizedName);
       const byIdEntry = menuMetadata?.byId?.[item.id];
       const byNameEntry = menuMetadata?.byName?.[normalizedName];
 
       const isLegacyHiddenDefault =
-        byIdEntry?.section === "Baked Goods" && byIdEntry?.visible === false;
+        ["Baked Goods", "Daily Menu", "Daily Bakes"].includes(byIdEntry?.section)
+        && byIdEntry?.visible === false;
 
       const shouldPreferCuratedDefault =
         curatedDefaultsByName.has(normalizedName) && !byNameEntry && isLegacyHiddenDefault;
@@ -551,12 +792,21 @@ const normalizeCatalogItems = (objects = [], menuMetadata = { byId: {}, byName: 
         .map((variation) => {
           const variationData = variation.item_variation_data || {};
           const money = variationData.price_money || {};
+          const stockLimit = normalizeStockLimit(metadata.stockByVariation?.[variation.id]);
+          const usedToday = usedByVariation.get(variation.id) || 0;
+          const menuName = metadata.menuNamesByVariation?.[variation.id]
+            || defaultMenuNamesByVariation.get(variation.id)
+            || "";
 
           return {
             id: variation.id,
             name: variationData.name || "Regular",
             priceAmount: typeof money.amount === "number" ? money.amount : null,
             currency: money.currency || "USD",
+            stockLimit,
+            remainingStock: stockLimit === null ? 0 : Math.max(0, stockLimit - usedToday),
+            stockConfigured: stockLimit !== null,
+            menuName,
           };
         });
 
@@ -576,7 +826,10 @@ const normalizeCatalogItems = (objects = [], menuMetadata = { byId: {}, byName: 
 const fetchAllCatalogItems = async () => {
   const objects = [];
   let cursor;
-  const menuMetadata = await readMenuMetadata();
+  const [menuMetadata, usedByVariation] = await Promise.all([
+    readMenuMetadata(),
+    getDailyStockUsage(),
+  ]);
 
   do {
     const page = await squareRequest("/v2/catalog/search", {
@@ -596,37 +849,73 @@ const fetchAllCatalogItems = async () => {
     cursor = page.cursor;
   } while (cursor);
 
-  return normalizeCatalogItems(objects, menuMetadata);
+  return normalizeCatalogItems(objects, menuMetadata, usedByVariation);
 };
 
-const ORDERABLE_SECTIONS = new Set(["Breakfast", "Lunch"]);
 const PREORDER_ORDERABLE_NAMES = new Set([
   "white bread",
   "cinnamon raisin bread",
   "cheddar jalopeno bread",
 ]);
 
-const getOrderableVariationIds = async () => {
+const getOrderableVariations = async () => {
   const items = await fetchAllCatalogItems();
-  const ids = new Set();
+  const variationsById = new Map();
 
   items.forEach((item) => {
     const normalizedName = normalizeKey(item?.name || "");
-    const isStandardOnlineOrderable = ORDERABLE_SECTIONS.has(item?.section) && item?.visible !== false;
+    const isStandardOnlineOrderable = item?.visible !== false;
     const isPreOrderBread = PREORDER_ORDERABLE_NAMES.has(normalizedName);
+    const hasThanksgivingPreOrderVariation = (item.variations || []).some(
+      (variation) => THANKSGIVING_PREORDER_VARIATION_IDS.has(variation?.id),
+    );
 
-    if (!isStandardOnlineOrderable && !isPreOrderBread) {
+    if (!isStandardOnlineOrderable && !isPreOrderBread && !hasThanksgivingPreOrderVariation) {
       return;
     }
 
     (item.variations || []).forEach((variation) => {
-      if (variation?.id) {
-        ids.add(variation.id);
+      if (variation?.id && THANKSGIVING_PREORDER_VARIATION_IDS.has(variation.id)) {
+        variationsById.set(variation.id, {
+          ...variation,
+          itemName: item.name,
+          stockConfigured: true,
+          remainingStock: Number.MAX_SAFE_INTEGER,
+          isThanksgivingPreOrder: true,
+        });
+        return;
+      }
+
+      if (
+        variation?.id
+        && (!variation.stockConfigured || variation.remainingStock > 0)
+      ) {
+        variationsById.set(variation.id, {
+          ...variation,
+          itemName: item.name,
+        });
       }
     });
   });
 
-  return ids;
+  return variationsById;
+};
+
+let checkoutLock = Promise.resolve();
+
+const runCheckoutExclusive = async (task) => {
+  const previousCheckout = checkoutLock;
+  let releaseCheckout;
+  checkoutLock = new Promise((resolve) => {
+    releaseCheckout = resolve;
+  });
+
+  await previousCheckout;
+  try {
+    return await task();
+  } finally {
+    releaseCheckout();
+  }
 };
 
 app.post("/admin/login", (req, res) => {
@@ -646,8 +935,9 @@ app.post("/admin/login", (req, res) => {
 app.get("/ordering-status", async (_req, res) => {
   try {
     const settings = await readOrderingSettings();
+    const schedule = getOrderingScheduleStatus(new Date(), bakeryTimeZone);
     res.set("Cache-Control", "no-store");
-    return res.json(settings);
+    return res.json({ ...settings, ...schedule });
   } catch (error) {
     return res.status(500).json({ error: error.message || "Failed to load ordering status" });
   }
@@ -766,6 +1056,7 @@ app.get("/menu", async (req, res) => {
     const includeHidden = req.query.includeHidden === "true";
     const items = await fetchAllCatalogItems();
     const filteredItems = includeHidden ? items : items.filter((item) => item.visible !== false);
+    res.set("Cache-Control", "no-store");
     return res.json({ items: filteredItems });
   } catch (error) {
     return res.status(500).json({ error: error.message || "Failed to load menu" });
@@ -788,12 +1079,15 @@ app.post("/admin/items", requireAdmin, async (req, res) => {
       description = "",
       categoryId = null,
       variations = [],
-      section = "Baked Goods",
+      section = "Daily Bakes",
       visible = true,
     } = req.body || {};
 
-    if (!name || !Array.isArray(variations) || variations.length === 0) {
-      return res.status(400).json({ error: "name and at least one variation are required" });
+    const variationError = validateRequestedVariations(variations);
+    if (!name || variationError) {
+      return res.status(400).json({
+        error: !name ? "Item name is required" : variationError,
+      });
     }
 
     const tempItemId = `#item-${Date.now()}`;
@@ -832,7 +1126,12 @@ app.post("/admin/items", requireAdmin, async (req, res) => {
       const menuMetadata = await readMenuMetadata();
       const safeSection = getSafeSection(section);
       const safeVisible = getSafeVisible(visible);
-      const entry = { section: safeSection, visible: safeVisible };
+      const entry = {
+        section: safeSection,
+        visible: safeVisible,
+        stockByVariation: buildStockByVariation(savedItem, variations),
+        menuNamesByVariation: buildMenuNamesByVariation(savedItem, variations),
+      };
       menuMetadata.byId[savedItem.id] = entry;
       menuMetadata.byName[normalizeKey(name)] = entry;
       await writeMenuMetadata(menuMetadata);
@@ -852,14 +1151,19 @@ app.patch("/admin/items/:itemId", requireAdmin, async (req, res) => {
       description = "",
       categoryId = null,
       variations = [],
-      section = "Baked Goods",
+      section = "Daily Bakes",
       visible = true,
     } = req.body || {};
 
-    if (!itemId || !name || !Array.isArray(variations) || variations.length === 0) {
-      return res
-        .status(400)
-        .json({ error: "itemId, name and at least one variation are required" });
+    const variationError = validateRequestedVariations(variations);
+    if (!itemId || !name || variationError) {
+      return res.status(400).json({
+        error: !itemId
+          ? "Item ID is required"
+          : !name
+            ? "Item name is required"
+            : variationError,
+      });
     }
 
     const current = await squareRequest(`/v2/catalog/object/${itemId}`);
@@ -871,7 +1175,8 @@ app.patch("/admin/items/:itemId", requireAdmin, async (req, res) => {
 
     const existingVariations = currentObject.item_data?.variations || [];
     const squareVariations = variations.map((variation, index) => {
-      const existing = existingVariations[index];
+      const existing = existingVariations.find((candidate) => candidate.id === variation?.id)
+        || existingVariations[index];
 
       return {
         type: "ITEM_VARIATION",
@@ -909,8 +1214,17 @@ app.patch("/admin/items/:itemId", requireAdmin, async (req, res) => {
     const menuMetadata = await readMenuMetadata();
     const safeSection = getSafeSection(section);
     const safeVisible = getSafeVisible(visible);
-    const entry = { section: safeSection, visible: safeVisible };
+    const entry = {
+      section: safeSection,
+      visible: safeVisible,
+      stockByVariation: buildStockByVariation(response.catalog_object, variations),
+      menuNamesByVariation: buildMenuNamesByVariation(response.catalog_object, variations),
+    };
     menuMetadata.byId[itemId] = entry;
+    const previousNameKey = normalizeKey(currentObject.item_data?.name || "");
+    if (previousNameKey && previousNameKey !== normalizeKey(name)) {
+      delete menuMetadata.byName[previousNameKey];
+    }
     menuMetadata.byName[normalizeKey(name)] = entry;
     await writeMenuMetadata(menuMetadata);
 
@@ -969,18 +1283,10 @@ app.delete("/admin/items/:itemId", requireAdmin, async (req, res) => {
   }
 });
 
-app.post("/create-checkout", async (req, res) => {
+app.post("/create-checkout", (req, res) => runCheckoutExclusive(async () => {
   try {
     if (!process.env.SQUARE_ACCESS_TOKEN || !squareLocationId) {
       return res.status(500).json({ error: "Missing Square backend configuration" });
-    }
-
-    const orderingSettings = await readOrderingSettings();
-    if (!orderingSettings.enabled) {
-      return res.status(503).json({
-        error: "Online ordering is currently turned off",
-        details: "Please call the cafe to place an order.",
-      });
     }
 
     const { items, customerName } = req.body;
@@ -989,9 +1295,49 @@ app.post("/create-checkout", async (req, res) => {
       return res.status(400).json({ error: "Cart is empty" });
     }
 
-    const orderableVariationIds = await getOrderableVariationIds();
+    const requestedVariationIds = items.map((item) =>
+      typeof item?.variationId === "string" ? item.variationId.trim() : ""
+    );
+    const isThanksgivingPreOrder = requestedVariationIds.every((variationId) =>
+      THANKSGIVING_PREORDER_VARIATION_IDS.has(variationId)
+    );
+    const hasThanksgivingPreOrderItem = requestedVariationIds.some((variationId) =>
+      THANKSGIVING_PREORDER_VARIATION_IDS.has(variationId)
+    );
+
+    if (hasThanksgivingPreOrderItem && !isThanksgivingPreOrder) {
+      return res.status(400).json({
+        error: "Separate checkout required",
+        details: "Thanksgiving pre-orders must be checked out separately from regular menu items.",
+      });
+    }
+
+    if (isThanksgivingPreOrder && !isThanksgivingPreOrderWindowOpen()) {
+      return res.status(409).json({
+        error: "Thanksgiving pre-orders are closed",
+        details: "Thanksgiving pre-orders are accepted October 1 through November 19 at 5 PM.",
+      });
+    }
+
+    const orderingSettings = await readOrderingSettings();
+    const orderingSchedule = getOrderingScheduleStatus(new Date(), bakeryTimeZone);
+    if (
+      (!orderingSettings.enabled || !orderingSchedule.isWithinOrderingWindow)
+      && !isThanksgivingPreOrder
+    ) {
+      return res.status(503).json({
+        error: "Online ordering is currently closed",
+        details: orderingSettings.enabled
+          ? orderingSchedule.message
+          : "Online ordering has been temporarily turned off. Please call the cafe to place an order.",
+      });
+    }
+
+    const orderableVariations = await getOrderableVariations();
 
     const invalidItemNames = [];
+    const requestedQuantityByVariation = new Map();
+    const requestedNameByVariation = new Map();
 
     items.forEach((item) => {
       const variationId =
@@ -999,7 +1345,7 @@ app.post("/create-checkout", async (req, res) => {
       const quantity = Number(item?.quantity);
       const itemName = typeof item?.name === "string" && item.name.trim() ? item.name.trim() : "Unknown item";
 
-      if (!Number.isFinite(quantity) || quantity <= 0) {
+      if (!Number.isInteger(quantity) || quantity <= 0) {
         invalidItemNames.push(itemName);
         return;
       }
@@ -1009,15 +1355,39 @@ app.post("/create-checkout", async (req, res) => {
         return;
       }
 
-      if (!orderableVariationIds.has(variationId)) {
+      if (!orderableVariations.has(variationId)) {
         invalidItemNames.push(itemName);
+        return;
       }
+
+      requestedQuantityByVariation.set(
+        variationId,
+        (requestedQuantityByVariation.get(variationId) || 0) + quantity,
+      );
+      requestedNameByVariation.set(variationId, itemName);
     });
 
     if (invalidItemNames.length > 0) {
       return res.status(400).json({
         error: "Invalid cart items",
         details: `These items are not currently available for online checkout: ${invalidItemNames.join(", ")}`,
+      });
+    }
+
+    const stockErrors = [];
+    requestedQuantityByVariation.forEach((quantity, variationId) => {
+      const variation = orderableVariations.get(variationId);
+      if (variation.stockConfigured && quantity > variation.remainingStock) {
+        stockErrors.push(
+          `${requestedNameByVariation.get(variationId) || variation.itemName} (${variation.remainingStock} left)`,
+        );
+      }
+    });
+
+    if (stockErrors.length > 0) {
+      return res.status(409).json({
+        error: "Not enough daily stock",
+        details: `Please update your cart. Available today: ${stockErrors.join(", ")}`,
       });
     }
 
@@ -1029,6 +1399,27 @@ app.post("/create-checkout", async (req, res) => {
         : {}),
     }));
 
+    const pickupDetails = isThanksgivingPreOrder
+      ? {
+          recipient: {
+            displayName: normalizedCustomerName || "Thanksgiving Pre-Order Pickup",
+          },
+          isCurbsidePickup: true,
+          scheduleType: "SCHEDULED",
+          pickupAt: getThanksgivingPickupAt(),
+          pickupWindowDuration: "PT7H",
+          note: "Thanksgiving pre-order pickup on November 25. Please pick up by 2 PM.",
+        }
+      : {
+          recipient: {
+            displayName: normalizedCustomerName || "Order for Pickup",
+          },
+          isCurbsidePickup: true,
+          scheduleType: "ASAP",
+          prepTimeDuration: "PT15M",
+          note: "Curbside pickup. Your order will be ready in 15 minutes.",
+        };
+
     const orderPayload = {
       locationId: squareLocationId,
       lineItems: normalizedLineItems,
@@ -1036,12 +1427,7 @@ app.post("/create-checkout", async (req, res) => {
         {
           type: "PICKUP",
           state: "PROPOSED",
-          pickupDetails: {
-            recipient: {
-              displayName: normalizedCustomerName || "Order for Pickup",
-            },
-            scheduleType: "ASAP",
-          },
+          pickupDetails,
         },
       ],
     };
@@ -1123,7 +1509,7 @@ app.post("/create-checkout", async (req, res) => {
         const recentOrder = ordersResponse?.result?.orders?.find(
           (o) =>
             o.fulfillments?.[0]?.pickupDetails?.recipient?.displayName ===
-            (normalizedCustomerName || "Order for Pickup")
+            pickupDetails.recipient.displayName
         );
 
         if (recentOrder?.id) {
@@ -1158,6 +1544,7 @@ app.post("/create-checkout", async (req, res) => {
       customerName: normalizedCustomerName || "Guest",
       items: items.map((item) => ({
         name: item.name || "Unknown Item",
+        variationId: typeof item?.variationId === "string" ? item.variationId.trim() : "",
         quantity: Number(item.quantity),
         price: item.basePriceMoney?.amount || 0,
         note: typeof item?.note === "string" ? item.note : "",
@@ -1175,7 +1562,7 @@ app.post("/create-checkout", async (req, res) => {
       "Payment failed";
     res.status(500).json({ error: "Payment failed", details: squareDetail });
   }
-});
+}));
 
 const port = Number(process.env.PORT) || 3001;
 app.listen(port, () => console.log(`Server running on port ${port}`));

@@ -1,18 +1,21 @@
 {
   "byId": {
     "ITD67G4DADGUSMKIC5TXG2DC": {
-      "section": "Baked Goods",
-      "visible": false
+      "section": "Daily Bakes",
+      "visible": false,
+      "stockByVariation": {}
     },
     "YMMKVM7S2UCBTSZID36J7MR2": {
-      "section": "Baked Goods",
-      "visible": false
+      "section": "Daily Bakes",
+      "visible": false,
+      "stockByVariation": {}
     }
   },
   "byName": {
     "dylan": {
       "section": "Loaded Energy",
-      "visible": true
+      "visible": true,
+      "stockByVariation": {}
     }
   }
 }

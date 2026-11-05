@@ -26,6 +26,8 @@ Required values:
 - `ADMIN_PASSWORD`
 - `ADMIN_JWT_SECRET` (long random string)
 
+Daily stock resets using `BAKERY_TIME_ZONE` (defaults to `America/New_York`).
+
 Optional tax values:
 
 - `STATE_TAX_PERCENT`
@@ -47,6 +49,7 @@ Server default: `http://localhost:3001`
 - `POST /create-checkout`
 - `GET /menu`
 - `GET /ordering-status`
+	- returns the emergency master-switch state plus the current Tuesday-Saturday, 7:30 AM-2:15 PM ordering-window status in `America/New_York`
 
 ### Admin auth
 
@@ -58,6 +61,7 @@ Server default: `http://localhost:3001`
 
 - `PATCH /admin/ordering-status`
 	- body: `{ "enabled": true }`
+	- controls the emergency master switch; the daily schedule still determines whether checkout is open
 
 ### Admin menu (Bearer token required)
 
@@ -70,13 +74,20 @@ Server default: `http://localhost:3001`
 			"description": "Fresh baked",
 			"categoryId": null,
 			"variations": [
-				{ "name": "Regular", "priceAmount": 450, "currency": "USD" }
+				{
+					"name": "Regular",
+					"priceAmount": 450,
+					"currency": "USD",
+					"stockLimit": 12
+				}
 			]
 		}
 		```
 - `PATCH /admin/items/:itemId`
 	- same body shape as create
 - `DELETE /admin/items/:itemId`
+
+`stockLimit` is required for every variation. It is the maximum quantity that can be checked out during one bakery-local day; `0` marks that variation sold out. The public menu returns both `stockLimit` and `remainingStock`.
 
 ## 5) Frontend wiring
 

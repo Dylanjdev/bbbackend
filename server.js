@@ -417,18 +417,7 @@ const curatedDefaultsByName = new Map(
   curatedDefaultItems.map((entry) => [normalizeKey(entry.name), entry.section]),
 );
 
-const defaultMenuNamesByVariation = new Map([
-  ["BCSSMOTHSCZF5RILWMPKGVBI", "Double Chocolate Brownies"],
-  ["7WCHB3ZABC72COZYGSSTF2SS", "Double Chocolate Cookies"],
-  ["B26BFSNNVQMR2LTHWV75JJBH", "Cran-Orange Scones"],
-  ["DHU62MYYBTNIHLQFV5NG4Q4L", "Apple Crumb Cake"],
-  ["K6NFLCWFO7T53G2V6Z72E5TK", "Carrot Cupcakes with Cream Cheese Buttercream"],
-  ["NANPTO7A32H2D2STQDXD4CEI", "Maple Pecan Cream Cheese Danishes"],
-  ["4EVFHDZ3LHYZOXF4EOGMD3JZ", "Cinnamon Rolls"],
-  ["BJ6WQGCEQMZV2XAPYNUUH533", "Southwest Quiche"],
-  ["3LMSDYWNKQESPH3ESB6NHWVS", "Brown Butter Pecan Cheesecake"],
-  ["IU5OOQJJI5XQD3YQ2O7TFAEC", "Nutella Croissants"],
-]);
+const defaultMenuNamesByVariation = new Map();
 
 const getSafeSection = (section) => {
   if (section === "Baked Goods" || section === "Daily Menu") {

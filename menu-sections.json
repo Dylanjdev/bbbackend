@@ -1,5 +1,11 @@
 {
-  "byId": {},
+  "byId": {
+    "YQDSOG6LQNYQOKY72FU7VTVK": {
+      "section": "Daily Bakes",
+      "visible": true,
+      "stockByVariation": {}
+    }
+  },
   "byName": {
     "dylan": {
       "section": "Loaded Energy",

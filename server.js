@@ -420,6 +420,7 @@ const curatedDefaultsByName = new Map(
 const defaultMenuNamesByVariation = new Map([
   ["BCSSMOTHSCZF5RILWMPKGVBI", "Double Chocolate Brownies"],
   ["7WCHB3ZABC72COZYGSSTF2SS", "Double Chocolate Cookies"],
+  ["YATUUQKWZKNHIJAL5PKKXWQH", "Pumpkin Muffins"],
   ["B26BFSNNVQMR2LTHWV75JJBH", "Cran-Orange Scones"],
   ["DHU62MYYBTNIHLQFV5NG4Q4L", "Apple Crumb Cake"],
   ["K6NFLCWFO7T53G2V6Z72E5TK", "Carrot Cupcakes with Cream Cheese Buttercream"],
